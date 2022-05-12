@@ -11,7 +11,7 @@ from pyspark.ml import Pipeline, PipelineModel
 from pyspark.ml.evaluation import ClusteringEvaluator
 from pyspark.ml.feature import StandardScaler, OneHotEncoder, StringIndexer
 
-# initialize the Spark application
+# Create a Spark application
 spark = SparkSession.builder\
         .appName('NetworkAttack')\
         .master('local[4]')\
@@ -44,7 +44,7 @@ data = dataWithoutHeader.toDF(
 
 print('Count of rows: {0}'.format(data.count()))
 
-# Let's check some statistics
+# The number of rows per each label (~cluster)
 data.select("label").groupBy("label").count().orderBy(fn.desc("count")).show(25)
 
 # Drop the categorical columns and cache the dataframe
@@ -83,7 +83,8 @@ withCluster.select('cluster', 'label') \
     .orderBy('cluster', fn.desc('count')) \
     .show(25)
 
-# Use the silhouette criterion to see how good each row fits to its cluster.
+# Use the silhouette criterion (https://en.wikipedia.org/wiki/Silhouette_(clustering))
+# to see how good each row fits to its cluster.
 evaluator = ClusteringEvaluator() \
     .setFeaturesCol('featureVector') \
     .setPredictionCol('cluster')
@@ -173,9 +174,10 @@ def clusteringScoreV2(data: DataFrame, k: int) -> float:
     
     return silhouette
 
+# Try k = 2
 clusteringScoreV2(numericOnly, 2)
 
-# Include the initally excluded faetures (protocol_type, service, flag)
+# Include the initally excluded features (protocol_type, service, flag)
 # For this, we need a one-hot-encoder transformer
 def oneHotPipeline(inputCol: str) -> Tuple[Pipeline, str]:
     
@@ -254,7 +256,8 @@ data.cache()
 kTrainingCost = list(map(partial(clusteringScoreV3, data, returnSilhouette=False), Ks))
 data.unpersist()
 
-# a helper function which only outputs the trained k-means
+# A helper function which only outputs the trained k-means
+# Similar to the other functions above
 def fitPipeline(data: DataFrame, k: int = 2) -> PipelineModel:
     
     protoTypeEncoder, protoTypeVecCol = oneHotPipeline("protocol_type")
@@ -306,12 +309,12 @@ clusterLabel = pipelineModel.transform(data).select('cluster', 'label')
 
 w = Window.partitionBy('cluster')
 
-# Implementation of the weighted cluster entropy using the target column (as explained in the book)
+# Pyspark implementation of the weighted cluster entropy using the target column (as explained in the book)
 weightedEntropy = clusterLabel.groupBy('cluster', 'label').count() \
     .withColumn('total', fn.sum('count').over(w)) \
     .withColumn('p', fn.col('count') / fn.col('total')) \
     .groupBy('cluster').agg((fn.sum('count') * -fn.sum(fn.col('p') * fn.log2(fn.col('p')))).alias('weighted_entropy')) \
     .rdd.map(lambda row: row[1]).collect()
 
-# Weighted cluster entropy
+# Weighted cluster entropy for k = 60
 sum(weightedEntropy) / data.count()
